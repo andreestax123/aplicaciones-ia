@@ -1,14 +1,16 @@
 import os
-import streamlit as st
+import time
 import pandas as pd
+import streamlit as st
 from dotenv import load_dotenv
 from google import genai
+from google.genai.errors import ServerError
 
 # 1. Configuración de la página
 st.set_page_config(
     page_title="Mesa de Ayuda IA",
     page_icon="🤖",
-    layout="wide"
+    layout="wide",
 )
 
 # 2. Carga segura de la API Key (funciona tanto en VS Code local como en la nube)
@@ -22,12 +24,34 @@ if not api_key:
 # Inicializar cliente de Gemini
 client = genai.Client(api_key=api_key)
 
+
+def generar_con_respaldo(contenido):
+    modelos = [
+        "gemini-3.8-flash",
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite-preview",
+    ]
+    ultimo_error = None
+    for modelo in modelos:
+        for _ in range(2):
+            try:
+                return client.models.generate_content(
+                    model=modelo,
+                    contents=contenido,
+                )
+            except ServerError as e:
+                ultimo_error = e
+                time.sleep(1.5)
+    raise ultimo_error
+
+
 # Intentar importar tus servicios existentes (con respaldo por si faltan carpetas al subir)
 try:
     from service.clasificador_service import AgenteClasificador
     from service.estimador_service import EstimadorService
     from service.ia_service import IAService
     from service.ticket_service import TicketService
+
     SERVICIOS_CARGADOS = True
 except ImportError:
     SERVICIOS_CARGADOS = False
@@ -38,7 +62,7 @@ st.sidebar.markdown("Proyecto - Ingeniería de IA (Ciclo II)")
 
 rol = st.sidebar.selectbox(
     "Seleccione su Rol de Ingreso:",
-    ["Usuario", "Trabajador", "Lider de Equipo", "SuperUsuario"]
+    ["Usuario", "Trabajador", "Lider de Equipo", "SuperUsuario"],
 )
 
 st.sidebar.divider()
@@ -47,7 +71,11 @@ st.sidebar.info(f"Sesión activa como: **{rol}**")
 # --- CUERPO PRINCIPAL ---
 st.title("Sistema Inteligente de Mesa de Ayuda")
 
-tab1, tab2, tab3 = st.tabs(["🎫 Gestión de Tickets", "💬 Agente de Soporte IA", "📊 Base de Datos (tickets.csv)"])
+tab1, tab2, tab3 = st.tabs([
+    "🎫 Gestión de Tickets",
+    "💬 Agente de Soporte IA",
+    "📊 Base de Datos (tickets.csv)",
+])
 
 # PESTAÑA 1: GESTIÓN SEGÚN EL ROL
 with tab1:
@@ -57,20 +85,24 @@ with tab1:
             nombre = st.text_input("Ingrese su nombre:")
             descripcion = st.text_area("Describa su problema o requerimiento:")
             enviado = st.form_submit_button("Registrar Ticket")
-            
+
             if enviado and nombre and descripcion:
-                # Clasificación automática usando Gemini si no están los módulos locales
                 prompt_clasif = (
-                    f"Clasifica este ticket de soporte técnico en un Área (Redes, Hardware, Software, Accesos) "
-                    f"y una Prioridad (Alta, Media, Baja). Responde en una línea breve.\nTicket: {descripcion}"
+                    "Clasifica este ticket de soporte técnico en un Área "
+                    "(Redes, Hardware, Software, Accesos) y una Prioridad "
+                    "(Alta, Media, Baja). Responde en una línea breve.\n"
+                    f"Ticket: {descripcion}"
                 )
-                respuesta = client.models.generate_content(
-                    model="gemini-3.8-flash",
-                    contents=prompt_clasif
-                )
-                st.success(f"✅ Ticket registrado para **{nombre}**.")
-                st.info(f"**Análisis Automático del Agente:** {respuesta.text}")
-                
+                try:
+                    respuesta = generar_con_respaldo(prompt_clasif)
+                    st.success(f"✅ Ticket registrado para **{nombre}**.")
+                    st.info(f"**Análisis Automático del Agente:** {respuesta.text}")
+                except Exception as e:
+                    st.warning(
+                        "El servicio de IA está experimentando alta demanda en este momento. "
+                        f"Intenta de nuevo en unos segundos. ({e})"
+                    )
+
     elif rol == "Trabajador":
         st.subheader("Panel de Resolución - Nivel 2")
         st.write("Aquí puedes revisar los tickets pendientes asignados a tu área.")
@@ -78,6 +110,8 @@ with tab1:
             df = pd.read_csv("tickets.csv")
             pendientes = df[df["estado"] != "Resuelto"] if "estado" in df.columns else df
             st.dataframe(pendientes, use_container_width=True)
+        else:
+            st.warning("No se encontró el archivo tickets.csv en la raíz del proyecto.")
 
     elif rol == "Lider de Equipo":
         st.subheader("Métricas y Supervisión de Equipo")
@@ -89,7 +123,10 @@ with tab1:
                 col2.metric("Prioridad Alta", len(df[df["prioridad"] == "Alta"]))
             if "estado" in df.columns:
                 col3.metric("Resueltos", len(df[df["estado"] == "Resuelto"]))
-            st.bar_chart(df["area"].value_counts()) if "area" in df.columns else None
+            if "area" in df.columns and not df.empty:
+                st.bar_chart(df["area"].value_counts())
+        else:
+            st.warning("No se encontró el archivo tickets.csv en la raíz del proyecto.")
 
     elif rol == "SuperUsuario":
         st.subheader("Panel Administrativo VIP & Auditoría")
@@ -97,6 +134,8 @@ with tab1:
         if os.path.exists("tickets.csv"):
             df = pd.read_csv("tickets.csv")
             st.dataframe(df, use_container_width=True)
+        else:
+            st.warning("No se encontró el archivo tickets.csv en la raíz del proyecto.")
 
 # PESTAÑA 2: AGENTE DE SOPORTE INTERACTIVO (EQUIVALENTE A iniciar_soporte)
 with tab2:
@@ -104,11 +143,10 @@ with tab2:
         "Usuario": "Agente de Soporte Asignado",
         "Trabajador": "Ingeniero de Soporte Nivel 2",
         "Lider de Equipo": "Analista Corporativo",
-        "SuperUsuario": "Asistencia VIP en Vivo (Atención Inmediata)"
+        "SuperUsuario": "Asistencia VIP en Vivo (Atención Inmediata)",
     }
     st.subheader(f"Canal activo: {canales[rol]}")
 
-    # Historial de chat en sesión
     if "mensajes" not in st.session_state:
         st.session_state.mensajes = []
 
@@ -126,12 +164,17 @@ with tab2:
                 f"Eres el '{canales[rol]}' de una Mesa de Ayuda empresarial. "
                 f"Estás atendiendo a un '{rol}'. Responde de manera técnica, amable y directa."
             )
-            respuesta = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=f"{contexto_rol}\n\nConsulta del usuario: {prompt}"
-            )
-            st.markdown(respuesta.text)
-            st.session_state.mensajes.append({"role": "assistant", "content": respuesta.text})
+            try:
+                respuesta = generar_con_respaldo(
+                    f"{contexto_rol}\n\nConsulta del usuario: {prompt}"
+                )
+                st.markdown(respuesta.text)
+                st.session_state.mensajes.append({"role": "assistant", "content": respuesta.text})
+            except Exception as e:
+                st.warning(
+                    "El agente está experimentando alta demanda en este momento. "
+                    f"Envía tu consulta nuevamente en unos segundos. ({e})"
+                )
 
 # PESTAÑA 3: DATASET
 with tab3:

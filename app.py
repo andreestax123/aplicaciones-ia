@@ -65,7 +65,7 @@ with tab1:
                     f"y una Prioridad (Alta, Media, Baja). Responde en una línea breve.\nTicket: {descripcion}"
                 )
                 respuesta = client.models.generate_content(
-                    model="gemini-2.5-flash",
+                    model="gemini-3.8-flash",
                     contents=prompt_clasif
                 )
                 st.success(f"✅ Ticket registrado para **{nombre}**.")

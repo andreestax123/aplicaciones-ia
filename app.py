@@ -127,7 +127,7 @@ with tab2:
                 f"Estás atendiendo a un '{rol}'. Responde de manera técnica, amable y directa."
             )
             respuesta = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.8-flash",
                 contents=f"{contexto_rol}\n\nConsulta del usuario: {prompt}"
             )
             st.markdown(respuesta.text)
